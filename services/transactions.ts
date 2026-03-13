@@ -1,0 +1,289 @@
+import { ApiError, apiRequest } from "@/services/api";
+
+type NumericLike = number | string | null;
+
+export type PropertyQuote = {
+  pricePerShare: number;
+  platformFeeRate: number;
+  usdcRequired: number;
+  platformFee: number;
+  availableShares: number;
+};
+
+type QuoteResponse = {
+  pricePerShare: NumericLike;
+  platformFeeRate: NumericLike;
+  usdcRequired: NumericLike;
+  platformFee: NumericLike;
+  availableShares: NumericLike;
+};
+
+export type InitiateBuyResponse = {
+  escrowPDA: string;
+  usdcAmount: string;
+  platformFee: string;
+  unsignedTx: string;
+};
+
+export type SellQuote = {
+  proceedsUsdc: number;
+  feeAmount: number;
+  netProceeds: number;
+  pnl: number;
+};
+
+type SellQuoteResponse = {
+  proceedsUsdc: NumericLike;
+  feeAmount: NumericLike;
+  netProceeds: NumericLike;
+  pnl: NumericLike;
+};
+
+export type InitiateSellResponse = {
+  unsignedTx: string;
+};
+
+export type ConfirmBuyResponse = {
+  success: boolean;
+  investmentRecord?: {
+    id: string;
+    userWallet: string;
+    propertyId: string;
+    sharesOwned: number;
+  };
+  updatedInvestment?: {
+    id: string;
+    sharesOwned: number;
+  };
+  tokenAccountAddress?: string;
+};
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function toNumber(value: NumericLike, fallback = 0): number {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : fallback;
+  }
+  return fallback;
+}
+
+export async function fetchPropertyQuote(
+  propertyId: string,
+  shares: number,
+): Promise<PropertyQuote> {
+  const response = await apiRequest<QuoteResponse>(
+    `/api/properties/${propertyId}/quote?shares=${shares}`,
+    {
+      method: "GET",
+      requiresAuth: true,
+    },
+  );
+
+  return {
+    pricePerShare: toNumber(response.pricePerShare),
+    platformFeeRate: toNumber(response.platformFeeRate),
+    usdcRequired: toNumber(response.usdcRequired),
+    platformFee: toNumber(response.platformFee),
+    availableShares: toNumber(response.availableShares),
+  };
+}
+
+export async function initiateBuyTransaction(params: {
+  propertyId: string;
+  shares: number;
+  walletAddress: string;
+}): Promise<InitiateBuyResponse> {
+  return apiRequest<InitiateBuyResponse>("/api/transactions/initiate-buy", {
+    method: "POST",
+    body: params,
+    requiresAuth: true,
+  });
+}
+
+export async function fetchSellQuote(params: {
+  propertyId: string;
+  shares: number;
+  walletAddress: string;
+}): Promise<SellQuote> {
+  const response = await apiRequest<SellQuoteResponse>(
+    `/api/investments/${params.propertyId}/sell-quote?shares=${params.shares}&walletAddress=${encodeURIComponent(params.walletAddress)}`,
+    {
+      method: "GET",
+      requiresAuth: true,
+    },
+  );
+
+  return {
+    proceedsUsdc: toNumber(response.proceedsUsdc),
+    feeAmount: toNumber(response.feeAmount),
+    netProceeds: toNumber(response.netProceeds),
+    pnl: toNumber(response.pnl),
+  };
+}
+
+export async function initiateSellTransaction(params: {
+  propertyId: string;
+  shares: number;
+  walletAddress: string;
+}): Promise<InitiateSellResponse> {
+  return apiRequest<InitiateSellResponse>("/api/transactions/initiate-sell", {
+    method: "POST",
+    body: params,
+    requiresAuth: true,
+  });
+}
+
+// ─── User transaction history ────────────────────────────────────────────────
+
+export type UserTransaction = {
+  id: string;
+  userId: string;
+  txType: string;
+  assetId: string | null;
+  marketId: string | null;
+  quantity: number;
+  amountUsdc: number;
+  txSignature: string;
+  createdAt: string;
+};
+
+type UserTransactionsResponse = {
+  message: string;
+  pagination: { total: number; limit: number; offset: number };
+  transactions: UserTransaction[];
+};
+
+export async function fetchUserTransactions(
+  limit = 20,
+  offset = 0,
+): Promise<{
+  transactions: UserTransaction[];
+  pagination: { total: number; limit: number; offset: number };
+}> {
+  const response = await apiRequest<UserTransactionsResponse>(
+    `/api/user/transactions?limit=${limit}&offset=${offset}`,
+    { method: "GET", requiresAuth: true },
+  );
+  return {
+    transactions: response.transactions ?? [],
+    pagination: response.pagination,
+  };
+}
+
+// ──── Asset trading: buy ─────────────────────────────────────────────────────
+
+export type BuyPreview = {
+  assetId: string;
+  assetName: string;
+  quantity: number;
+  baseCost: number;
+  totalCost: number;
+  feeBreakdown: { feeBps: number; feeAmount: number };
+  currentPrice: number;
+};
+
+type PrepareBuyResponse = { unsignedTx: string; preview: BuyPreview };
+
+export async function prepareBuyAsset(params: {
+  assetId: string;
+  quantity: number;
+}): Promise<PrepareBuyResponse> {
+  return apiRequest<PrepareBuyResponse>("/api/assets/buy/prepare", {
+    method: "POST",
+    body: params,
+    requiresAuth: true,
+  });
+}
+
+export async function confirmBuyAsset(params: {
+  txSignature: string;
+  assetId: string;
+  quantity: number;
+}): Promise<unknown> {
+  return apiRequest("/api/assets/buy/confirm", {
+    method: "POST",
+    body: params,
+    requiresAuth: true,
+  });
+}
+
+// ──── Asset trading: sell ────────────────────────────────────────────────────
+
+export type SellPreview = {
+  assetId: string;
+  assetName: string;
+  quantity: number;
+  grossPayout: number;
+  netPayout: number;
+  feeBreakdown: { feeBps: number; feeAmount: number };
+  currentPrice: number;
+};
+
+type PrepareSellResponse = { unsignedTx: string; preview: SellPreview };
+
+export async function prepareSellAsset(params: {
+  assetId: string;
+  quantity: number;
+}): Promise<PrepareSellResponse> {
+  return apiRequest<PrepareSellResponse>("/api/assets/sell/prepare", {
+    method: "POST",
+    body: params,
+    requiresAuth: true,
+  });
+}
+
+export async function confirmSellAsset(params: {
+  txSignature: string;
+  assetId: string;
+  quantity: number;
+}): Promise<unknown> {
+  return apiRequest("/api/assets/sell/confirm", {
+    method: "POST",
+    body: params,
+    requiresAuth: true,
+  });
+}
+
+// ──── Legacy property transactions (kept for compatibility) ──────────────────
+
+export async function confirmTransaction(params: {
+  txSignature: string;
+  propertyId: string;
+  shares: number;
+  side: "buy" | "sell";
+}): Promise<ConfirmBuyResponse> {
+  // Mobile network can briefly drop after returning from wallet app; retry
+  // network-level failures only (status 0) to avoid masking real API errors.
+  const maxAttempts = 3;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await apiRequest<ConfirmBuyResponse>("/api/transactions/confirm", {
+        method: "POST",
+        body: params,
+        requiresAuth: true,
+      });
+    } catch (error) {
+      const isNetworkFailure = error instanceof ApiError && error.status === 0;
+      const isLastAttempt = attempt === maxAttempts;
+
+      if (!isNetworkFailure || isLastAttempt) {
+        throw error;
+      }
+
+      console.warn("[Transactions] confirm retry after network failure", {
+        attempt,
+        txSignature: params.txSignature,
+        propertyId: params.propertyId,
+      });
+
+      await sleep(500 * attempt);
+    }
+  }
+
+  throw new Error("Transaction confirm failed after retries");
+}
