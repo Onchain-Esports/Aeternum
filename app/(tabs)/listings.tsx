@@ -15,9 +15,11 @@ import { Buffer } from 'buffer';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import {
   ActivityIndicator,
   Alert,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -101,6 +103,7 @@ const STATUS_CONFIG: Record<string, { label: string; color: string; bg: string }
 
 export default function ListingsScreen() {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const insets = useSafeAreaInsets();
   const isDevnet = useWalletStore((s) => s.isDevnet);
   const [myListings, setMyListings] = useState<Listing[]>([]);
@@ -114,6 +117,7 @@ export default function ListingsScreen() {
   const [sellActionMessage, setSellActionMessage] = useState('');
   const [drafts, setDrafts] = useState<ListingDraftListItem[]>([]);
   const [isLoadingDrafts, setIsLoadingDrafts] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [draftError, setDraftError] = useState('');
   const [mintingDraftId, setMintingDraftId] = useState<string | null>(null);
 
@@ -170,6 +174,20 @@ export default function ListingsScreen() {
     loadMyListings();
     loadHoldings();
   }, [loadDrafts, loadHoldings, loadMyListings]);
+
+  const onRefresh = useCallback(async () => {
+    try {
+      setIsRefreshing(true);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['investments_me'] }),
+        queryClient.invalidateQueries({ queryKey: ['yield_claimable'] }),
+        queryClient.invalidateQueries({ queryKey: ['user_profile'] }),
+      ]);
+      await Promise.all([loadDrafts(), loadMyListings(), loadHoldings()]);
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, [loadDrafts, loadHoldings, loadMyListings, queryClient]);
 
   const handleMintProperty = async (draftId: string) => {
     if (mintingDraftId) return;
@@ -301,6 +319,12 @@ export default function ListingsScreen() {
       setSellActionMessage(successText);
       Alert.alert('Sell successful', successText);
 
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['investments_me'] }),
+        queryClient.invalidateQueries({ queryKey: ['yield_claimable'] }),
+        queryClient.invalidateQueries({ queryKey: ['user_profile'] }),
+      ]);
+
       await Promise.all([loadHoldings(), loadMyListings()]);
     } catch (error) {
       const message = `[${stage}] ${getErrorMessage(error)}`;
@@ -321,7 +345,7 @@ export default function ListingsScreen() {
 
       <View style={styles.header}>
         <View>
-          <Text style={styles.title}>My Markets</Text>
+          <Text style={styles.title}>My Holdings</Text>
           <Text style={styles.subtitle}>{activeListings.length} active markets created</Text>
         </View>
         {/* <TouchableOpacity
@@ -336,7 +360,18 @@ export default function ListingsScreen() {
         </TouchableOpacity> */}
       </View>
 
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 32 }}>
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={{ paddingBottom: 32 }}
+        refreshControl={(
+          <RefreshControl
+            refreshing={isRefreshing}
+            onRefresh={onRefresh}
+            tintColor={Colors.gold}
+            colors={[Colors.gold]}
+          />
+        )}
+      >
         <View style={styles.statsRow}>
           {[
             { label: 'Total Raised', value: formatCurrency(totalRaised, true), color: Colors.green },

@@ -17,6 +17,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { ArrowLeft, Check, Minus, Plus, Shield, TrendingDown } from 'lucide-react-native';
 import React, { useEffect, useMemo, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import {
   ActivityIndicator,
   ScrollView,
@@ -90,6 +91,7 @@ async function sendAndConfirmWithFallback(
 export default function SellSharesScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
+  const queryClient = useQueryClient();
   const insets = useSafeAreaInsets();
   const { publicKeyBase58, isConnected, investments } = useWallet();
   const isDevnet = useWalletStore((s) => s.isDevnet);
@@ -361,6 +363,12 @@ export default function SellSharesScreen() {
       console.log('[Sell] confirm request', confirmPayload);
       await confirmSellAsset(confirmPayload);
       console.log('[Sell] confirm success', { txSignature: signature });
+
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['investments_me'] }),
+        queryClient.invalidateQueries({ queryKey: ['yield_claimable'] }),
+        queryClient.invalidateQueries({ queryKey: ['user_profile'] }),
+      ]);
 
       setIsSuccess(true);
       setTimeout(() => router.replace('/(tabs)/investments' as any), 2000);

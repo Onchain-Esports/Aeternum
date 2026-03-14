@@ -4,15 +4,17 @@ import { formatCurrency } from '@/mocks/data';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 import { ArrowDownRight, ArrowUpRight, Bell, ChevronRight, Copy, Layers, TrendingUp, Zap } from 'lucide-react-native';
-import React, { useEffect, useRef } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Animated, Dimensions,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
 } from 'react-native';
+import { useQueryClient } from '@tanstack/react-query';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Defs, Path, Stop, LinearGradient as SvgGrad } from 'react-native-svg';
 
@@ -50,6 +52,7 @@ function MiniChart({ data, color }: { data: number[]; color: string }) {
 
 export default function HomeScreen() {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const insets = useSafeAreaInsets();
   const {
     walletAddress, profile, totalPortfolioValue,
@@ -59,6 +62,7 @@ export default function HomeScreen() {
 
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(20)).current;
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   useEffect(() => {
     Animated.parallel([
@@ -70,6 +74,19 @@ export default function HomeScreen() {
   const portfolioData = profile.portfolioHistory.map(p => p.value);
   const yieldData = profile.yieldHistory.map(p => p.value);
   const roiPositive = overallROI >= 0;
+
+  const onRefresh = useCallback(async () => {
+    try {
+      setIsRefreshing(true);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['investments_me'] }),
+        queryClient.invalidateQueries({ queryKey: ['yield_claimable'] }),
+        queryClient.invalidateQueries({ queryKey: ['user_profile'] }),
+      ]);
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, [queryClient]);
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
@@ -92,7 +109,18 @@ export default function HomeScreen() {
         </TouchableOpacity>
       </View>
 
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 24 }}>
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={{ paddingBottom: 24 }}
+        refreshControl={(
+          <RefreshControl
+            refreshing={isRefreshing}
+            onRefresh={onRefresh}
+            tintColor={Colors.gold}
+            colors={[Colors.gold]}
+          />
+        )}
+      >
         <Animated.View style={{ opacity: fadeAnim, transform: [{ translateY: slideAnim }] }}>
           <View style={styles.heroCard}>
             <LinearGradient

@@ -19,6 +19,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { ArrowLeft, Check, Minus, Plus, Shield, Wallet } from 'lucide-react-native';
 import React, { useEffect, useMemo, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import {
   ActivityIndicator,
   ScrollView,
@@ -200,6 +201,7 @@ async function sendAndConfirmWithFallback(
 export default function BuySharesScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
+  const queryClient = useQueryClient();
   const insets = useSafeAreaInsets();
   const { publicKeyBase58, isConnected } = useWallet();
   const isDevnet = useWalletStore((s) => s.isDevnet);
@@ -468,6 +470,12 @@ export default function BuySharesScreen() {
       await confirmBuyAsset(confirmPayload);
       console.log('[Buy] confirm success', { txSignature: signature });
 
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['investments_me'] }),
+        queryClient.invalidateQueries({ queryKey: ['yield_claimable'] }),
+        queryClient.invalidateQueries({ queryKey: ['user_profile'] }),
+      ]);
+
       setIsSuccess(true);
       setTimeout(() => router.replace('/(tabs)/investments' as any), 2000);
     } catch (error) {
@@ -487,6 +495,11 @@ export default function BuySharesScreen() {
             txSignature: submittedSignature,
             assetId: id,
           });
+          await Promise.all([
+            queryClient.invalidateQueries({ queryKey: ['investments_me'] }),
+            queryClient.invalidateQueries({ queryKey: ['yield_claimable'] }),
+            queryClient.invalidateQueries({ queryKey: ['user_profile'] }),
+          ]);
           setTransactionError('');
           setIsSuccess(true);
           setTimeout(() => router.replace('/(tabs)/investments' as any), 2000);

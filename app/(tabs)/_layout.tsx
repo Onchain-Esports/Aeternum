@@ -65,7 +65,7 @@ export default function TabsLayout() {
       <Tabs.Screen
         name="listings"
         options={{
-          title: 'Create',
+          title: 'Holdings',
           tabBarIcon: ({ color, size }) => <Building2 size={size - 2} color={color} />,
         }}
       />
