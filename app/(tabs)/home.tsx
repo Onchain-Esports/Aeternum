@@ -3,7 +3,7 @@ import { useWallet } from '@/context/WalletContext';
 import { formatCurrency } from '@/mocks/data';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
-import { ArrowDownRight, ArrowUpRight, Bell, Building2, ChevronRight, Copy, Layers, TrendingUp, Zap } from 'lucide-react-native';
+import { ArrowDownRight, ArrowUpRight, Bell, ChevronRight, Copy, Layers, TrendingUp, Zap } from 'lucide-react-native';
 import React, { useEffect, useRef } from 'react';
 import {
   Animated, Dimensions,

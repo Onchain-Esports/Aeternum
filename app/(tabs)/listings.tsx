@@ -1,9 +1,9 @@
 import Colors from '@/constants/Colors';
 import { formatCurrency } from '@/mocks/data';
 import { ApiError } from '@/services/api';
+import { fetchListingDrafts, ListingDraftListItem, mintPropertyFromDraft } from '@/services/listingDraft';
 import { runMobileWalletTransaction } from '@/services/mobileWallet';
 import { fetchUserPortfolio, PortfolioHolding, PortfolioSummary } from '@/services/portfolio';
-import { fetchListingDrafts, ListingDraftListItem, mintPropertyFromDraft } from '@/services/listingDraft';
 import { fetchMyListings } from '@/services/property';
 import { confirmSellAsset, prepareSellAsset } from '@/services/transactions';
 import { useWalletStore } from '@/stores/wallet-store';
@@ -14,17 +14,15 @@ import bs58 from 'bs58';
 import { Buffer } from 'buffer';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
-import { Building2, ChevronRight, MapPin, Plus, Users } from 'lucide-react-native';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
-  Image,
   ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
-  View,
+  View
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -463,7 +461,7 @@ export default function ListingsScreen() {
             })}
           </>
         )}
-{/*  */}
+        {/*  */}
 
 
 

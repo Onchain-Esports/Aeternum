@@ -503,7 +503,7 @@ export default function BuySharesScreen() {
         ? `${message}\n\nYour device cannot reach Solana RPC. Set EXPO_PUBLIC_SOLANA_DEVNET_RPC_URL (or EXPO_PUBLIC_SOLANA_DEVNET_RPC_FALLBACKS) to a reachable endpoint, or disable VPN/Private DNS.`
         : confirmNetworkBlocked
           ? `${message}\n\nBuy confirmation is delayed by network. If this was just signed in wallet, wait ~30 seconds and check portfolio/transactions before retrying to avoid duplicate buys.`
-        : message;
+          : message;
 
       console.error('[Buy] transaction error', {
         stage,

@@ -1,8 +1,8 @@
 import { MOCK_USER } from '@/mocks/data';
 import { BACKEND_TOKEN_KEY } from '@/services/api';
 import { fetchMyInvestments, MarketPosition, PortfolioHolding } from '@/services/investments';
-import type { UserTransaction } from '@/services/transactions';
 import { runMobileWalletTransaction } from '@/services/mobileWallet';
+import type { UserTransaction } from '@/services/transactions';
 import { fetchUserProfile } from '@/services/userProfile';
 import {
   confirmYieldClaim,
