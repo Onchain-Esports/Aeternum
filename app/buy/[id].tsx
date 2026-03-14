@@ -1,10 +1,12 @@
 import Colors from '@/constants/Colors';
 import { useWallet } from '@/context/WalletContext';
 import { formatCurrency } from '@/mocks/data';
+import { ApiError } from '@/services/api';
 import { fetchAssetById, type Asset } from '@/services/assets';
 import { runMobileWalletTransaction } from '@/services/mobileWallet';
 import {
   confirmBuyAsset,
+  fetchUserTransactions,
   prepareBuyAsset,
   type BuyPreview,
 } from '@/services/transactions';
@@ -47,6 +49,99 @@ function getErrorMessage(error: unknown): string {
 
   const fallback = String(error ?? 'Unknown wallet error');
   return fallback && fallback !== '[object Object]' ? fallback : 'Unknown wallet error';
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function verifyBuyRecordedBySignature(
+  txSignature: string,
+  assetId: string,
+): Promise<boolean> {
+  try {
+    const { transactions } = await fetchUserTransactions(50, 0);
+    return transactions.some(
+      (tx) => tx.txSignature === txSignature && tx.assetId === assetId,
+    );
+  } catch {
+    return false;
+  }
+}
+
+async function verifyRecentBuyRecorded(params: {
+  assetId: string;
+  quantity: number;
+  submittedAtMs: number;
+}): Promise<boolean> {
+  try {
+    const { transactions } = await fetchUserTransactions(100, 0);
+    return transactions.some((tx) => {
+      if (tx.txType !== 'BUY_ASSET') return false;
+      if (tx.assetId !== params.assetId) return false;
+      if (Number(tx.quantity) !== params.quantity) return false;
+
+      const txMs = new Date(tx.createdAt).getTime();
+      return Number.isFinite(txMs) && txMs >= params.submittedAtMs - 2 * 60 * 1000;
+    });
+  } catch {
+    return false;
+  }
+}
+
+async function reconcileBuyAfterConfirmNetworkFailure(params: {
+  txSignature: string;
+  assetId: string;
+  quantity: number;
+  submittedAtMs: number;
+}): Promise<boolean> {
+  const maxAttempts = 6;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    await sleep(1200 * attempt);
+
+    try {
+      await confirmBuyAsset({
+        txSignature: params.txSignature,
+        assetId: params.assetId,
+        quantity: params.quantity,
+      });
+      console.log('[Buy] confirm eventually succeeded', { attempt });
+      return true;
+    } catch (error) {
+      if (!(error instanceof ApiError && error.status === 0)) {
+        throw error;
+      }
+    }
+
+    const bySignature = await verifyBuyRecordedBySignature(
+      params.txSignature,
+      params.assetId,
+    );
+    if (bySignature) {
+      console.log('[Buy] transaction found in history by signature', {
+        txSignature: params.txSignature,
+        attempt,
+      });
+      return true;
+    }
+
+    const byRecentMatch = await verifyRecentBuyRecorded({
+      assetId: params.assetId,
+      quantity: params.quantity,
+      submittedAtMs: params.submittedAtMs,
+    });
+    if (byRecentMatch) {
+      console.log('[Buy] transaction found in history by recent asset/quantity match', {
+        assetId: params.assetId,
+        quantity: params.quantity,
+        attempt,
+      });
+      return true;
+    }
+  }
+
+  return false;
 }
 
 async function sendAndConfirmWithFallback(
@@ -224,6 +319,8 @@ export default function BuySharesScreen() {
 
     let stage = 'init';
     let walletStep = 'not-started';
+    let submittedSignature: string | null = null;
+    const submittedAtMs = Date.now();
 
     try {
       setIsConfirming(true);
@@ -287,7 +384,7 @@ export default function BuySharesScreen() {
         } catch (decodeError) {
           console.error('[Buy] Failed to deserialize unsigned transaction', {
             error: decodeError instanceof Error ? decodeError.message : String(decodeError),
-            unsignedTxLength: prepared.unsignedTx?.length,
+            unsignedTxLength: unsignedTxToUse?.length,
           });
           throw new Error(
             `Transaction decode failed: ${decodeError instanceof Error ? decodeError.message : 'Unknown error'}`,
@@ -365,6 +462,7 @@ export default function BuySharesScreen() {
       });
 
       stage = 'confirm-buy';
+      submittedSignature = signature;
       const confirmPayload = { txSignature: signature, assetId: id, quantity: quantityNum };
       console.log('[Buy] confirm request', confirmPayload);
       await confirmBuyAsset(confirmPayload);
@@ -373,11 +471,38 @@ export default function BuySharesScreen() {
       setIsSuccess(true);
       setTimeout(() => router.replace('/(tabs)/investments' as any), 2000);
     } catch (error) {
+      const confirmNetworkFailure =
+        stage === 'confirm-buy' && error instanceof ApiError && error.status === 0;
+
+      if (confirmNetworkFailure && submittedSignature) {
+        const alreadyRecorded = await reconcileBuyAfterConfirmNetworkFailure({
+          txSignature: submittedSignature,
+          assetId: id,
+          quantity: quantityNum,
+          submittedAtMs,
+        });
+
+        if (alreadyRecorded) {
+          console.warn('[Buy] Confirm call failed initially but transaction is now reconciled', {
+            txSignature: submittedSignature,
+            assetId: id,
+          });
+          setTransactionError('');
+          setIsSuccess(true);
+          setTimeout(() => router.replace('/(tabs)/investments' as any), 2000);
+          return;
+        }
+      }
+
       const message = getErrorMessage(error);
       const rpcBlocked =
         stage === 'wallet-sign-and-send' && message.includes('All RPC endpoints failed');
+      const confirmNetworkBlocked =
+        stage === 'confirm-buy' && error instanceof ApiError && error.status === 0;
       const finalMessage = rpcBlocked
         ? `${message}\n\nYour device cannot reach Solana RPC. Set EXPO_PUBLIC_SOLANA_DEVNET_RPC_URL (or EXPO_PUBLIC_SOLANA_DEVNET_RPC_FALLBACKS) to a reachable endpoint, or disable VPN/Private DNS.`
+        : confirmNetworkBlocked
+          ? `${message}\n\nBuy confirmation is delayed by network. If this was just signed in wallet, wait ~30 seconds and check portfolio/transactions before retrying to avoid duplicate buys.`
         : message;
 
       console.error('[Buy] transaction error', {

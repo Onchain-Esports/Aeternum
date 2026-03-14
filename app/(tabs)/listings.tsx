@@ -1,15 +1,24 @@
 import Colors from '@/constants/Colors';
 import { formatCurrency } from '@/mocks/data';
 import { ApiError } from '@/services/api';
+import { runMobileWalletTransaction } from '@/services/mobileWallet';
+import { fetchUserPortfolio, PortfolioHolding, PortfolioSummary } from '@/services/portfolio';
 import { fetchListingDrafts, ListingDraftListItem, mintPropertyFromDraft } from '@/services/listingDraft';
 import { fetchMyListings } from '@/services/property';
+import { confirmSellAsset, prepareSellAsset } from '@/services/transactions';
+import { useWalletStore } from '@/stores/wallet-store';
 import { Listing } from '@/types';
+import { Web3MobileWallet } from '@solana-mobile/mobile-wallet-adapter-protocol-web3js';
+import { clusterApiUrl, Connection, VersionedTransaction } from '@solana/web3.js';
+import bs58 from 'bs58';
+import { Buffer } from 'buffer';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 import { Building2, ChevronRight, MapPin, Plus, Users } from 'lucide-react-native';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   Image,
   ScrollView,
   StyleSheet,
@@ -18,6 +27,71 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
+const APP_IDENTITY = {
+  name: 'Aeternum',
+  uri: 'https://aeturnum.app',
+  icon: 'favicon.ico',
+};
+
+async function sendAndConfirmWithFallback(
+  serializedTx: Uint8Array,
+  isDevnet: boolean,
+): Promise<{ signature: string; endpoint: string }> {
+  const devnetFallbacks = (process.env.EXPO_PUBLIC_SOLANA_DEVNET_RPC_FALLBACKS ?? '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+  const mainnetFallbacks = (process.env.EXPO_PUBLIC_SOLANA_MAINNET_RPC_FALLBACKS ?? '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+  const endpoints = isDevnet
+    ? [
+      process.env.EXPO_PUBLIC_SOLANA_DEVNET_RPC_URL?.trim(),
+      ...devnetFallbacks,
+      clusterApiUrl('devnet'),
+      'https://api.devnet.solana.com',
+    ]
+    : [
+      process.env.EXPO_PUBLIC_SOLANA_MAINNET_RPC_URL?.trim(),
+      ...mainnetFallbacks,
+      clusterApiUrl('mainnet-beta'),
+      'https://api.mainnet-beta.solana.com',
+    ];
+
+  const uniqueEndpoints = Array.from(
+    new Set(endpoints.filter((endpoint): endpoint is string => !!endpoint)),
+  );
+  const failures: string[] = [];
+
+  for (const endpoint of uniqueEndpoints) {
+    try {
+      const connection = new Connection(endpoint, 'confirmed');
+      const signature = await connection.sendRawTransaction(serializedTx, {
+        skipPreflight: false,
+        maxRetries: 3,
+      });
+
+      await connection.confirmTransaction(signature, 'confirmed');
+      return { signature, endpoint };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      failures.push(`${endpoint}: ${message}`);
+      console.error('[Listings] Sell RPC endpoint failed', { endpoint, error: message });
+    }
+  }
+
+  throw new Error(`All RPC endpoints failed. ${failures.join(' | ')}`);
+}
+
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error && error.message) return error.message;
+  if (typeof error === 'string' && error.trim()) return error;
+  return 'Unknown transaction error';
+}
 
 const STATUS_CONFIG: Record<string, { label: string; color: string; bg: string }> = {
   draft: { label: 'Draft', color: Colors.textMuted, bg: Colors.border },
@@ -30,9 +104,16 @@ const STATUS_CONFIG: Record<string, { label: string; color: string; bg: string }
 export default function ListingsScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const isDevnet = useWalletStore((s) => s.isDevnet);
   const [myListings, setMyListings] = useState<Listing[]>([]);
   const [isLoadingMyListings, setIsLoadingMyListings] = useState(true);
   const [myListingsError, setMyListingsError] = useState('');
+  const [portfolioSummary, setPortfolioSummary] = useState<PortfolioSummary | null>(null);
+  const [holdings, setHoldings] = useState<PortfolioHolding[]>([]);
+  const [isLoadingHoldings, setIsLoadingHoldings] = useState(true);
+  const [holdingsError, setHoldingsError] = useState('');
+  const [sellingHoldingId, setSellingHoldingId] = useState<string | null>(null);
+  const [sellActionMessage, setSellActionMessage] = useState('');
   const [drafts, setDrafts] = useState<ListingDraftListItem[]>([]);
   const [isLoadingDrafts, setIsLoadingDrafts] = useState(true);
   const [draftError, setDraftError] = useState('');
@@ -70,10 +151,27 @@ export default function ListingsScreen() {
     }
   }, []);
 
+  const loadHoldings = useCallback(async () => {
+    try {
+      setIsLoadingHoldings(true);
+      setHoldingsError('');
+      const data = await fetchUserPortfolio();
+      setPortfolioSummary(data.summary);
+      setHoldings(data.holdings);
+    } catch (error) {
+      setHoldingsError(error instanceof Error ? error.message : 'Unable to fetch holdings');
+      setPortfolioSummary(null);
+      setHoldings([]);
+    } finally {
+      setIsLoadingHoldings(false);
+    }
+  }, []);
+
   useEffect(() => {
     loadDrafts();
     loadMyListings();
-  }, [loadDrafts, loadMyListings]);
+    loadHoldings();
+  }, [loadDrafts, loadHoldings, loadMyListings]);
 
   const handleMintProperty = async (draftId: string) => {
     if (mintingDraftId) return;
@@ -97,6 +195,124 @@ export default function ListingsScreen() {
     }
   };
 
+  const handleSellAllHolding = async (holding: PortfolioHolding) => {
+    if (sellingHoldingId || holding.quantity <= 0) return;
+
+    const quantityNum = Math.floor(holding.quantity);
+    if (quantityNum <= 0) {
+      Alert.alert('Sell failed', 'No units available to sell for this asset.');
+      return;
+    }
+
+    let stage = 'init';
+
+    try {
+      setSellActionMessage('');
+      setSellingHoldingId(holding.holdingId);
+
+      stage = 'prepare-sell';
+      const prepared = await prepareSellAsset({
+        assetId: holding.asset.id,
+        quantity: quantityNum,
+      });
+
+      if (!prepared.unsignedTx) {
+        throw new Error('No unsigned transaction returned from sell prepare');
+      }
+
+      stage = 'wallet-sign-and-send';
+      const txSignature = await runMobileWalletTransaction(async (wallet: Web3MobileWallet) => {
+        const walletState = useWalletStore.getState();
+        const chain = walletState.isDevnet ? 'solana:devnet' : 'solana:mainnet-beta';
+
+        const authResult = await wallet.authorize({
+          chain,
+          identity: APP_IDENTITY,
+          auth_token: walletState.authToken ?? undefined,
+        });
+
+        if (walletState.walletType && walletState.publicKeyBase58) {
+          walletState.setWalletData({
+            walletType: walletState.walletType,
+            publicKeyBase58: walletState.publicKeyBase58,
+            authToken: authResult.auth_token ?? walletState.authToken ?? '',
+          });
+        }
+
+        const unsignedTxBytes = Buffer.from(prepared.unsignedTx, 'base64');
+        if (unsignedTxBytes.length === 0) {
+          throw new Error('Invalid unsigned transaction: empty bytes');
+        }
+
+        const unsignedTx = VersionedTransaction.deserialize(unsignedTxBytes);
+
+        const maybeSignAndSend = (
+          wallet as unknown as {
+            signAndSendTransactions?: (args: {
+              transactions: VersionedTransaction[];
+            }) => Promise<{ signatures: Array<string | Uint8Array> }>;
+          }
+        ).signAndSendTransactions;
+
+        if (typeof maybeSignAndSend === 'function') {
+          const walletSendResult = await maybeSignAndSend({ transactions: [unsignedTx] });
+          const walletSig = Array.isArray(walletSendResult)
+            ? walletSendResult[0]
+            : walletSendResult?.signatures?.[0];
+
+          if (typeof walletSig === 'string' && walletSig.length > 0) {
+            return walletSig;
+          }
+
+          if (walletSig instanceof Uint8Array && walletSig.length > 0) {
+            return bs58.encode(walletSig);
+          }
+
+          const txSignatureBytes = unsignedTx.signatures?.[0];
+          if (txSignatureBytes instanceof Uint8Array && txSignatureBytes.some((b) => b !== 0)) {
+            return bs58.encode(txSignatureBytes);
+          }
+
+          throw new Error('Wallet submitted transaction but did not return a signature');
+        }
+
+        const signedTxs = await wallet.signTransactions({ transactions: [unsignedTx] });
+        if (!signedTxs?.[0]) {
+          throw new Error('Wallet returned no signed transaction');
+        }
+
+        const result = await sendAndConfirmWithFallback(
+          signedTxs[0].serialize(),
+          walletState.isDevnet,
+        );
+
+        return result.signature;
+      });
+
+      stage = 'confirm-sell';
+      const confirmed = await confirmSellAsset({
+        txSignature,
+        assetId: holding.asset.id,
+        quantity: quantityNum,
+      });
+
+      const payout =
+        confirmed.totalPayout ?? confirmed.feeBreakdown?.netPayout ?? prepared.preview.netPayout;
+      const successText = `Sold ${quantityNum} ${holding.asset.name} for ${formatCurrency(payout)} USDC`;
+
+      setSellActionMessage(successText);
+      Alert.alert('Sell successful', successText);
+
+      await Promise.all([loadHoldings(), loadMyListings()]);
+    } catch (error) {
+      const message = `[${stage}] ${getErrorMessage(error)}`;
+      setSellActionMessage(message);
+      Alert.alert('Sell failed', message);
+    } finally {
+      setSellingHoldingId(null);
+    }
+  };
+
   const totalRaised = activeListings.reduce((s, l) => s + l.amountRaised, 0);
   const totalTarget = activeListings.reduce((s, l) => s + l.totalTarget, 0);
   const liveCount = activeListings.filter((l) => l.status === 'live').length;
@@ -110,7 +326,7 @@ export default function ListingsScreen() {
           <Text style={styles.title}>My Markets</Text>
           <Text style={styles.subtitle}>{activeListings.length} active markets created</Text>
         </View>
-        <TouchableOpacity
+        {/* <TouchableOpacity
           style={styles.addBtn}
           onPress={() => router.push('/list/step1' as any)}
           activeOpacity={0.85}
@@ -119,7 +335,7 @@ export default function ListingsScreen() {
             <Plus size={18} color={Colors.background} />
             <Text style={styles.addBtnText}>Create New</Text>
           </LinearGradient>
-        </TouchableOpacity>
+        </TouchableOpacity> */}
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 32 }}>
@@ -136,176 +352,120 @@ export default function ListingsScreen() {
           ))}
         </View>
 
-        <Text style={styles.sectionTitle}>Draft Markets</Text>
-        {isLoadingDrafts ? (
+        <Text style={styles.sectionTitle}>My Holdings</Text>
+        {isLoadingHoldings ? (
           <View style={styles.draftLoader}>
             <ActivityIndicator color={Colors.gold} />
-            <Text style={styles.draftLoaderText}>Loading drafts...</Text>
+            <Text style={styles.draftLoaderText}>Loading holdings...</Text>
           </View>
-        ) : draftError ? (
+        ) : holdingsError ? (
           <View style={styles.draftErrorBox}>
-            <Text style={styles.draftErrorText}>{draftError}</Text>
+            <Text style={styles.draftErrorText}>{holdingsError}</Text>
           </View>
-        ) : drafts.length === 0 ? (
+        ) : holdings.length === 0 ? (
           <View style={styles.draftEmptyBox}>
-            <Text style={styles.draftEmptyText}>No drafts found</Text>
-          </View>
-        ) : (
-          drafts.map((draft) => (
-            <TouchableOpacity
-              key={draft.id}
-              style={styles.draftCard}
-              activeOpacity={0.85}
-              onPress={() => router.push(`/list/draft/${draft.id}` as any)}
-            >
-              <View style={styles.draftHeader}>
-                <Text style={styles.draftName}>{draft.step1Data?.name || 'Untitled draft'}</Text>
-                <View style={styles.draftStatusBadge}>
-                  <Text style={styles.draftStatusText}>{draft.workflowStatus}</Text>
-                </View>
-              </View>
-
-              <Text style={styles.draftMeta}>
-                {[draft.step1Data?.city, draft.step1Data?.country].filter(Boolean).join(', ') || 'Location missing'}
-              </Text>
-
-              <View style={styles.draftProgressRow}>
-                {/* <Text style={styles.draftProgressText}>Step {draft.stepCompleted} / 4     </Text> */}
-                <Text style={styles.draftProgressText}>
-                  {draft.submittedAt ? 'Submitted  ' : 'Not submitted  '}
-                </Text>
-                <ChevronRight size={14} color={Colors.textMuted} />
-              </View>
-
-              {draft.workflowStatus === 'submitted' && (
-                <TouchableOpacity
-                  style={styles.mintBtn}
-                  activeOpacity={0.85}
-                  onPress={() => handleMintProperty(draft.id)}
-                  disabled={mintingDraftId === draft.id}
-                >
-                  {mintingDraftId === draft.id ? (
-                    <ActivityIndicator size="small" color={Colors.background} />
-                  ) : (
-                    <Text style={styles.mintBtnText}>Mint Market</Text>
-                  )}
-                </TouchableOpacity>
-              )}
-
-              {/* <TouchableOpacity
-                style={styles.editBtn}
-                activeOpacity={0.8}
-                onPress={() => router.push('/list/step1' as any)}
-              >
-                <Edit3 size={14} color={Colors.cyan} />
-                <Text style={styles.editBtnText}>Continue Draft</Text>
-              </TouchableOpacity> */}
-            </TouchableOpacity>
-          ))
-        )}
-
-        {isLoadingMyListings ? (
-          <View style={styles.draftLoader}>
-            <ActivityIndicator color={Colors.gold} />
-            <Text style={styles.draftLoaderText}>Loading your created markets...</Text>
-          </View>
-        ) : myListingsError ? (
-          <View style={styles.draftErrorBox}>
-            <Text style={styles.draftErrorText}>{myListingsError}</Text>
-          </View>
-        ) : activeListings.length === 0 ? (
-          <View style={styles.emptyState}>
-            <Text style={styles.emptyIcon}>🎮</Text>
-            <Text style={styles.emptyTitle}>No markets yet</Text>
-            <Text style={styles.emptyText}>
-              Create esports markets and let traders take positions with transparent pricing
-            </Text>
-            <TouchableOpacity
-              style={styles.emptyBtn}
-              onPress={() => router.push('/list/step1' as any)}
-              activeOpacity={0.85}
-            >
-              <LinearGradient colors={['#D4AF37', '#A88C28']} style={styles.emptyBtnGrad}>
-                <Text style={styles.emptyBtnText}>Create a Market</Text>
-              </LinearGradient>
-            </TouchableOpacity>
+            <Text style={styles.draftEmptyText}>No holdings yet</Text>
           </View>
         ) : (
           <>
-            <Text style={styles.sectionTitle}>Approved / Live Markets</Text>
-            {activeListings.map((listing) => {
-              const cfg = STATUS_CONFIG[listing.status];
-              const pct = listing.totalTarget > 0
-                ? (listing.amountRaised / listing.totalTarget * 100).toFixed(0)
-                : '0';
+            {portfolioSummary && (
+              <View style={styles.holdingsSummaryRow}>
+                <View style={styles.holdingsSummaryCard}>
+                  <Text style={[styles.holdingsSummaryValue, { color: Colors.cyan }]}>
+                    {formatCurrency(portfolioSummary.totalValue)}
+                  </Text>
+                  <Text style={styles.holdingsSummaryLabel}>Portfolio Value</Text>
+                </View>
+                <View style={styles.holdingsSummaryCard}>
+                  <Text style={[styles.holdingsSummaryValue, { color: Colors.textSecondary }]}>
+                    {formatCurrency(portfolioSummary.totalCost)}
+                  </Text>
+                  <Text style={styles.holdingsSummaryLabel}>Cost Basis</Text>
+                </View>
+                <View style={styles.holdingsSummaryCard}>
+                  <Text
+                    style={[
+                      styles.holdingsSummaryValue,
+                      {
+                        color:
+                          portfolioSummary.totalUnrealizedPnl >= 0 ? Colors.green : Colors.red,
+                      },
+                    ]}
+                  >
+                    {portfolioSummary.totalUnrealizedPnl >= 0 ? '+' : ''}
+                    {formatCurrency(portfolioSummary.totalUnrealizedPnl)}
+                  </Text>
+                  <Text style={styles.holdingsSummaryLabel}>Unrealized P&L</Text>
+                </View>
+              </View>
+            )}
+
+            {sellActionMessage ? (
+              <View style={styles.holdingsInfoBox}>
+                <Text style={styles.holdingsInfoText}>{sellActionMessage}</Text>
+              </View>
+            ) : null}
+
+            {holdings.map((holding) => {
+              const isPnlPositive = holding.unrealizedPnl >= 0;
+              const isSellingThis = sellingHoldingId === holding.holdingId;
               return (
-                <View key={listing.id} style={styles.listingCard}>
-                  <View style={styles.listingHeader}>
-                    {listing.image ? (
-                      <Image source={{ uri: listing.image }} style={styles.listingImage} />
-                    ) : (
-                      <View style={styles.listingImagePlaceholder}>
-                        <Building2 size={24} color={Colors.textMuted} />
-                      </View>
-                    )}
-                    <View style={styles.listingInfo}>
-                      <Text style={styles.listingName} numberOfLines={2}>{listing.propertyName}</Text>
-                      {(listing.city || listing.country) && (
-                        <View style={styles.locationRow}>
-                          <MapPin size={11} color={Colors.textMuted} />
-                          <Text style={styles.locationText}>
-                            {[listing.city, listing.country].filter(Boolean).join(', ')}
-                          </Text>
-                        </View>
-                      )}
-                      <View style={[styles.statusBadge, { backgroundColor: cfg.bg }]}>
-                        <View style={[styles.statusDot, { backgroundColor: cfg.color }]} />
-                        <Text style={[styles.statusText, { color: cfg.color }]}>{cfg.label}</Text>
-                      </View>
+                <View key={holding.holdingId} style={styles.holdingCard}>
+                  <View style={styles.holdingHeader}>
+                    <View style={styles.holdingMainInfo}>
+                      <Text style={styles.holdingName} numberOfLines={2}>{holding.asset.name}</Text>
+                      <Text style={styles.holdingMeta}>
+                        {holding.asset.team?.name || holding.asset.collection?.name || holding.asset.assetType}
+                      </Text>
+                    </View>
+                    <View style={styles.holdingUnitsPill}>
+                      <Text style={styles.holdingUnitsText}>{holding.quantity} units</Text>
                     </View>
                   </View>
 
-                  {listing.status === 'live' && (
-                    <>
-                      <View style={styles.raisedRow}>
-                        <Text style={styles.raisedText}>
-                          {formatCurrency(listing.amountRaised)} filled of {formatCurrency(listing.totalTarget)}
-                        </Text>
-                        <Text style={styles.raisedPct}>{pct}%</Text>
-                      </View>
-                      <View style={styles.progressBar}>
-                        <LinearGradient
-                          colors={[Colors.green, Colors.goldDark]}
-                          style={[styles.progressFill, { width: `${pct}%` as any }]}
-                          start={{ x: 0, y: 0 }}
-                          end={{ x: 1, y: 0 }}
-                        />
-                      </View>
-                      <View style={styles.investorsRow}>
-                        <Users size={12} color={Colors.textMuted} />
-                        <Text style={styles.investorsText}>{listing.investors} traders</Text>
-                        {listing.yieldPercent && (
-                          <Text style={styles.yieldText}>{listing.yieldPercent}% reward APR</Text>
-                        )}
-                      </View>
-                    </>
-                  )}
-
-                  <View style={styles.listingActions}>
-                    <TouchableOpacity
-                      style={styles.viewBtn}
-                      activeOpacity={0.8}
-                      onPress={() => router.push(`/property/${listing.id}` as any)}
-                    >
-                      <Text style={styles.viewBtnText}>View Details</Text>
-                      <ChevronRight size={14} color={Colors.textMuted} />
-                    </TouchableOpacity>
+                  <View style={styles.holdingStatsRow}>
+                    <View style={styles.holdingStatCell}>
+                      <Text style={styles.holdingStatLabel}>Current Value</Text>
+                      <Text style={styles.holdingStatValue}>{formatCurrency(holding.currentValue)}</Text>
+                    </View>
+                    <View style={styles.holdingStatCell}>
+                      <Text style={styles.holdingStatLabel}>Current Price</Text>
+                      <Text style={styles.holdingStatValue}>{formatCurrency(holding.currentPrice)}</Text>
+                    </View>
+                    <View style={styles.holdingStatCell}>
+                      <Text style={styles.holdingStatLabel}>Avg Buy</Text>
+                      <Text style={styles.holdingStatValue}>{formatCurrency(holding.avgBuyPrice)}</Text>
+                    </View>
                   </View>
+
+                  <View style={styles.holdingPnlRow}>
+                    <Text style={styles.holdingPnlLabel}>Unrealized P&L</Text>
+                    <Text style={[styles.holdingPnlValue, { color: isPnlPositive ? Colors.green : Colors.red }]}>
+                      {isPnlPositive ? '+' : ''}
+                      {formatCurrency(holding.unrealizedPnl)} ({holding.unrealizedPnlPct.toFixed(2)}%)
+                    </Text>
+                  </View>
+
+                  <TouchableOpacity
+                    style={[styles.sellAllBtn, (!isDevnet || isSellingThis) && styles.sellAllBtnDisabled]}
+                    activeOpacity={0.85}
+                    onPress={() => handleSellAllHolding(holding)}
+                    disabled={isSellingThis || !isDevnet}
+                  >
+                    {isSellingThis ? (
+                      <ActivityIndicator size="small" color={Colors.background} />
+                    ) : (
+                      <Text style={styles.sellAllBtnText}>Sell All Holdings</Text>
+                    )}
+                  </TouchableOpacity>
                 </View>
               );
             })}
           </>
         )}
+{/*  */}
+
+
 
         <View style={styles.infoBox}>
           <Text style={styles.infoTitle}>How market creation works</Text>
@@ -526,6 +686,138 @@ const styles = StyleSheet.create({
   draftMeta: { color: Colors.textMuted, fontSize: 12, marginTop: 6 },
   draftProgressRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 8, marginBottom: 10 },
   draftProgressText: { color: Colors.textSecondary, fontSize: 12 },
+  holdingsSummaryRow: {
+    flexDirection: 'row',
+    gap: 10,
+    paddingHorizontal: 20,
+    marginBottom: 12,
+  },
+  holdingsSummaryCard: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.card,
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 8,
+    alignItems: 'center',
+  },
+  holdingsSummaryValue: {
+    fontSize: 14,
+    fontWeight: '700' as const,
+    marginBottom: 2,
+  },
+  holdingsSummaryLabel: {
+    fontSize: 10,
+    color: Colors.textMuted,
+  },
+  holdingsInfoBox: {
+    marginHorizontal: 20,
+    marginBottom: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: Colors.cyan,
+    backgroundColor: Colors.cyanGlow,
+    padding: 10,
+  },
+  holdingsInfoText: {
+    color: Colors.cyan,
+    fontSize: 12,
+  },
+  holdingCard: {
+    marginHorizontal: 20,
+    marginBottom: 12,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.card,
+    padding: 14,
+  },
+  holdingHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 10,
+    gap: 10,
+  },
+  holdingMainInfo: {
+    flex: 1,
+  },
+  holdingName: {
+    color: Colors.text,
+    fontSize: 14,
+    fontWeight: '700' as const,
+    marginBottom: 4,
+  },
+  holdingMeta: {
+    color: Colors.textMuted,
+    fontSize: 12,
+  },
+  holdingUnitsPill: {
+    backgroundColor: Colors.goldGlow,
+    borderWidth: 1,
+    borderColor: Colors.goldDark,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  holdingUnitsText: {
+    color: Colors.gold,
+    fontSize: 11,
+    fontWeight: '700' as const,
+  },
+  holdingStatsRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 10,
+  },
+  holdingStatCell: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: 10,
+    backgroundColor: Colors.surface,
+    padding: 8,
+  },
+  holdingStatLabel: {
+    color: Colors.textMuted,
+    fontSize: 10,
+    marginBottom: 4,
+  },
+  holdingStatValue: {
+    color: Colors.text,
+    fontSize: 12,
+    fontWeight: '600' as const,
+  },
+  holdingPnlRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  holdingPnlLabel: {
+    color: Colors.textSecondary,
+    fontSize: 12,
+  },
+  holdingPnlValue: {
+    fontSize: 12,
+    fontWeight: '700' as const,
+  },
+  sellAllBtn: {
+    borderRadius: 8,
+    backgroundColor: Colors.red,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+  },
+  sellAllBtnDisabled: {
+    opacity: 0.6,
+  },
+  sellAllBtnText: {
+    color: Colors.background,
+    fontSize: 12,
+    fontWeight: '700' as const,
+  },
   mintBtn: {
     marginTop: 2,
     borderRadius: 8,

@@ -54,6 +54,7 @@ export default function HomeScreen() {
   const {
     walletAddress, profile, totalPortfolioValue,
     totalInvested, totalYieldEarned, totalClaimable, overallROI,
+    holdings, positions, transactions,
   } = useWallet();
 
   const fadeAnim = useRef(new Animated.Value(0)).current;
@@ -120,12 +121,31 @@ export default function HomeScreen() {
                 { label: 'Invested', value: formatCurrency(totalInvested, true) },
                 { label: 'Rewards Earned', value: formatCurrency(totalYieldEarned, true) },
                 { label: 'Claimable', value: formatCurrency(totalClaimable, true) },
+                { label: 'Holdings', value: `${holdings.length}` },
               ].map((s) => (
                 <View key={s.label} style={styles.heroStat}>
                   <Text style={styles.heroStatVal}>{s.value}</Text>
                   <Text style={styles.heroStatLabel}>{s.label}</Text>
                 </View>
               ))}
+            </View>
+          </View>
+
+          <View style={styles.portfolioBreakdownCard}>
+            <Text style={styles.sectionTitle}>Portfolio Breakdown</Text>
+            <View style={styles.breakdownGrid}>
+              <View style={styles.breakdownCell}>
+                <Text style={styles.breakdownValue}>{holdings.length}</Text>
+                <Text style={styles.breakdownLabel}>Asset Holdings</Text>
+              </View>
+              <View style={styles.breakdownCell}>
+                <Text style={styles.breakdownValue}>{positions.length}</Text>
+                <Text style={styles.breakdownLabel}>Prediction Positions</Text>
+              </View>
+              <View style={styles.breakdownCell}>
+                <Text style={styles.breakdownValue}>{transactions.length}</Text>
+                <Text style={styles.breakdownLabel}>Transactions</Text>
+              </View>
             </View>
           </View>
 
@@ -157,8 +177,8 @@ export default function HomeScreen() {
             {[
               { label: 'Explore', sub: 'Markets', icon: Layers, color: Colors.cyan, route: '/(tabs)/explore' as any },
               { label: 'Claim', sub: 'Rewards', icon: Zap, color: Colors.green, route: '/claim' as any },
-              { label: 'Create', sub: 'Market', icon: Building2, color: Colors.gold, route: '/list/step1' as any },
-              { label: 'Positions', sub: 'My Trades', icon: TrendingUp, color: Colors.purple, route: '/(tabs)/investments' as any },
+              // { label: 'Create', sub: 'Market', icon: Building2, color: Colors.gold, route: '/list/step1' as any },
+              { label: 'Positions', sub: 'My Trades  ', icon: TrendingUp, color: Colors.purple, route: '/(tabs)/investments' as any },
             ].map((a) => (
               <TouchableOpacity
                 key={a.label}
@@ -185,6 +205,27 @@ export default function HomeScreen() {
                 <Text key={p.month} style={styles.yieldMonth}>{p.month}</Text>
               ))}
             </View>
+          </View>
+
+          <View style={styles.activitySection}>
+            <Text style={styles.sectionTitle}>Recent Transactions</Text>
+            {transactions.slice(0, 5).map((tx) => (
+              <View key={tx.id} style={styles.activityItem}>
+                <View style={styles.activityInfo}>
+                  <Text style={styles.activityUser}>{tx.txType.replace(/_/g, ' ')}</Text>
+                  <Text style={styles.activityType}>Qty {tx.quantity}</Text>
+                </View>
+                <View style={styles.activityRight}>
+                  <Text style={styles.activityAmount}>{formatCurrency(tx.amountUsdc, true)}</Text>
+                  <Text style={styles.activityDate}>{new Date(tx.createdAt).toLocaleDateString()}</Text>
+                </View>
+              </View>
+            ))}
+            {transactions.length === 0 && (
+              <View style={styles.emptyTxBox}>
+                <Text style={styles.emptyTxText}>No transactions yet</Text>
+              </View>
+            )}
           </View>
 
 
@@ -298,12 +339,15 @@ const styles = StyleSheet.create({
   heroStats: {
     flexDirection: 'row',
     justifyContent: 'space-between',
+    flexWrap: 'wrap',
+    gap: 8,
     borderTopWidth: 1,
     borderTopColor: 'rgba(212, 175, 55, 0.2)',
     paddingTop: 16,
   },
   heroStat: {
     alignItems: 'center',
+    minWidth: '22%',
   },
   heroStatVal: {
     fontSize: 16,
@@ -402,6 +446,31 @@ const styles = StyleSheet.create({
     fontSize: 10,
     color: Colors.textMuted,
   },
+  portfolioBreakdownCard: {
+    marginHorizontal: 20,
+    backgroundColor: Colors.card,
+    borderRadius: 16,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    marginBottom: 20,
+  },
+  breakdownGrid: {
+    flexDirection: 'row',
+    gap: 10,
+    paddingHorizontal: 4,
+  },
+  breakdownCell: {
+    flex: 1,
+    backgroundColor: Colors.surface,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    padding: 12,
+    alignItems: 'center',
+  },
+  breakdownValue: { fontSize: 18, fontWeight: '800' as const, color: Colors.gold, marginBottom: 4 },
+  breakdownLabel: { fontSize: 10, color: Colors.textMuted, textAlign: 'center' },
   activitySection: {
     paddingHorizontal: 20,
   },
@@ -473,4 +542,13 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: Colors.textMuted,
   },
+  emptyTxBox: {
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.card,
+    borderRadius: 12,
+    padding: 12,
+    alignItems: 'center',
+  },
+  emptyTxText: { fontSize: 12, color: Colors.textMuted },
 });

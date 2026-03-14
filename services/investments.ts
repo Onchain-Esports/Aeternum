@@ -1,4 +1,5 @@
 import { apiRequest } from "@/services/api";
+import { fetchUserTransactions, UserTransaction } from "@/services/transactions";
 import type { Investment, Listing } from "@/types";
 
 // ─── Portfolio API response types ────────────────────────────────────────────
@@ -11,7 +12,7 @@ type PortfolioSummary = {
   totalUnrealizedPnlPct: number;
 };
 
-type PortfolioHolding = {
+export type PortfolioHolding = {
   holdingId: string;
   asset: {
     id: string;
@@ -40,7 +41,7 @@ type PortfolioResponse = {
 
 // ─── Positions API response types ────────────────────────────────────────────
 
-type MarketPosition = {
+export type MarketPosition = {
   positionId: string;
   market: {
     id: string;
@@ -80,6 +81,9 @@ export type WalletInvestmentsSummary = {
     totalYieldEarned: number;
     totalClaimableYield: number;
   };
+  holdings: PortfolioHolding[];
+  positions: MarketPosition[];
+  transactions: UserTransaction[];
   investments: Investment[];
   listings: Listing[];
 };
@@ -88,7 +92,7 @@ const FALLBACK_IMAGE =
   "https://images.unsplash.com/photo-1560518883-ce09059eeffa?w=800&q=80";
 
 export async function fetchMyInvestments(): Promise<WalletInvestmentsSummary> {
-  const [portfolioRes, positionsRes] = await Promise.all([
+  const [portfolioRes, positionsRes, transactionsRes] = await Promise.all([
     apiRequest<PortfolioResponse>("/api/user/portfolio", {
       method: "GET",
       requiresAuth: true,
@@ -97,6 +101,7 @@ export async function fetchMyInvestments(): Promise<WalletInvestmentsSummary> {
       method: "GET",
       requiresAuth: true,
     }),
+    fetchUserTransactions(20, 0),
   ]);
 
   const holdingInvestments: Investment[] = (portfolioRes.holdings ?? []).map(
@@ -153,6 +158,8 @@ export async function fetchMyInvestments(): Promise<WalletInvestmentsSummary> {
     totalUnrealizedPnlPct: 0,
   };
   const holdings = portfolioRes.holdings ?? [];
+  const positionsList = positionsRes.positions ?? [];
+  const transactions = transactionsRes.transactions ?? [];
 
   return {
     walletAddress: "",
@@ -165,6 +172,9 @@ export async function fetchMyInvestments(): Promise<WalletInvestmentsSummary> {
       totalYieldEarned: summary.totalUnrealizedPnl + positionsTotalPnl,
       totalClaimableYield: 0,
     },
+    holdings,
+    positions: positionsList,
+    transactions,
     investments: [...holdingInvestments, ...positionInvestments],
     listings: [],
   };

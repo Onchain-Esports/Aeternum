@@ -18,7 +18,17 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 export default function InvestmentsScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { investments, totalPortfolioValue, totalInvested, totalYieldEarned, totalClaimable, overallROI } = useWallet();
+  const {
+    investments,
+    holdings,
+    positions,
+    transactions,
+    totalPortfolioValue,
+    totalInvested,
+    totalYieldEarned,
+    totalClaimable,
+    overallROI,
+  } = useWallet();
 
   const roiPositive = overallROI >= 0;
 
@@ -96,13 +106,13 @@ export default function InvestmentsScreen() {
           </TouchableOpacity>
         )}
 
-        <Text style={styles.sectionTitle}>Open Positions ({investments.length})</Text>
+        <Text style={styles.sectionTitle}>Asset Holdings ({holdings.length})</Text>
 
-        {investments.length === 0 ? (
+        {holdings.length === 0 ? (
           <View style={styles.emptyState}>
             <Text style={styles.emptyIcon}>📈</Text>
-            <Text style={styles.emptyTitle}>No positions yet</Text>
-            <Text style={styles.emptyText}>Start trading tokenized esports markets to build your portfolio</Text>
+            <Text style={styles.emptyTitle}>No holdings yet</Text>
+            <Text style={styles.emptyText}>Start trading tokenized assets to build your portfolio</Text>
             <TouchableOpacity
               style={styles.emptyBtn}
               onPress={() => router.push('/(tabs)/explore' as any)}
@@ -114,39 +124,40 @@ export default function InvestmentsScreen() {
             </TouchableOpacity>
           </View>
         ) : (
-          investments.map((inv) => {
-            const pnl = inv.currentValue - inv.purchasePrice;
-            const pnlPositive = pnl >= 0;
-            const claimPct = inv.claimableYield > 0
-              ? ((inv.claimableYield / (inv.yieldEarned || 1)) * 100).toFixed(0)
-              : '0';
+          holdings.map((holding) => {
+            const pnlPositive = holding.unrealizedPnl >= 0;
             return (
-              <View key={inv.id} style={styles.invCard}>
+              <View key={holding.holdingId} style={styles.invCard}>
                 <View style={styles.invHeader}>
-                  <Image source={{ uri: inv.propertyImage }} style={styles.invImage} />
+                  <Image
+                    source={{ uri: holding.asset.metadataUri || 'https://images.unsplash.com/photo-1560518883-ce09059eeffa?w=800&q=80' }}
+                    style={styles.invImage}
+                  />
                   <View style={styles.invInfo}>
-                    <Text style={styles.invName} numberOfLines={2}>{inv.propertyName}</Text>
-                    <Text style={styles.invLocation}>{inv.propertyLocation}</Text>
+                    <Text style={styles.invName} numberOfLines={2}>{holding.asset.name}</Text>
+                    <Text style={styles.invLocation}>
+                      {holding.asset.collection?.name || holding.asset.team?.name || holding.asset.assetType}
+                    </Text>
                     <Text style={styles.invDate}>
-                      {inv.sharesOwned} units · Entered {inv.investedAt}
+                      {holding.quantity} units · Acquired {new Date(holding.acquiredAt).toLocaleDateString()}
                     </Text>
                   </View>
                 </View>
 
                 <View style={styles.invStats}>
                   <View style={styles.invStat}>
-                    <Text style={styles.invStatVal}>{formatCurrency(inv.currentValue)}</Text>
+                    <Text style={styles.invStatVal}>{formatCurrency(holding.currentValue)}</Text>
                     <Text style={styles.invStatLabel}>Current Value</Text>
                   </View>
                   <View style={styles.invStat}>
                     <Text style={[styles.invStatVal, { color: pnlPositive ? Colors.green : Colors.red }]}>
-                      {pnlPositive ? '+' : ''}{formatCurrency(pnl)}
+                      {pnlPositive ? '+' : ''}{formatCurrency(holding.unrealizedPnl)}
                     </Text>
                     <Text style={styles.invStatLabel}>P&L</Text>
                   </View>
                   <View style={styles.invStat}>
                     <Text style={[styles.invStatVal, { color: Colors.gold }]}>
-                      {inv.roi.toFixed(1)}%
+                      {holding.unrealizedPnlPct.toFixed(1)}%
                     </Text>
                     <Text style={styles.invStatLabel}>ROI</Text>
                   </View>
@@ -154,37 +165,86 @@ export default function InvestmentsScreen() {
 
                 <View style={styles.yieldRow}>
                   <View>
-                    <Text style={styles.yieldEarned}>Rewards Earned: {formatCurrency(inv.yieldEarned)}</Text>
-                    {inv.claimableYield > 0 && (
-                      <Text style={styles.yieldClaimable}>
-                        Claimable: {formatCurrency(inv.claimableYield)}
-                      </Text>
-                    )}
+                    <Text style={styles.yieldEarned}>Avg Buy: {formatCurrency(holding.avgBuyPrice)}</Text>
+                    <Text style={styles.yieldClaimable}>Current: {formatCurrency(holding.currentPrice)}</Text>
                   </View>
                   <View style={styles.invActions}>
-                    {inv.claimableYield > 0 && (
-                      <TouchableOpacity
-                        style={styles.claimBtn}
-                        onPress={() => router.push('/claim' as any)}
-                        activeOpacity={0.85}
-                      >
-                        <Text style={styles.claimBtnText}>Claim</Text>
-                      </TouchableOpacity>
-                    )}
-                    {inv.sharesOwned > 0 && (
-                      <TouchableOpacity
-                        style={styles.sellBtn}
-                        onPress={() => router.push(`/sell/${inv.propertyId}` as any)}
-                        activeOpacity={0.85}
-                      >
-                        <Text style={styles.sellBtnText}>Sell</Text>
-                      </TouchableOpacity>
-                    )}
+                    <TouchableOpacity
+                      style={styles.sellBtn}
+                      onPress={() => router.push(`/sell/${holding.asset.id}` as any)}
+                      activeOpacity={0.85}
+                    >
+                      <Text style={styles.sellBtnText}>Sell</Text>
+                    </TouchableOpacity>
                   </View>
                 </View>
               </View>
             );
           })
+        )}
+
+        <Text style={styles.sectionTitle}>Open Prediction Positions ({positions.length})</Text>
+        {positions.length === 0 ? (
+          <View style={styles.emptyInline}>
+            <Text style={styles.emptyInlineText}>No open prediction positions</Text>
+          </View>
+        ) : (
+          positions.map((position) => {
+            const pnlPositive = position.unrealizedPnl >= 0;
+            return (
+              <View key={position.positionId} style={styles.invCard}>
+                <View style={styles.positionHeader}>
+                  <Text style={styles.invName} numberOfLines={2}>
+                    {position.market.match.teamA.name} vs {position.market.match.teamB.name}
+                  </Text>
+                  <View style={styles.positionSidePill}>
+                    <Text style={styles.positionSideText}>{position.side === 'TEAM_A' ? 'Team A' : 'Team B'}</Text>
+                  </View>
+                </View>
+                <Text style={styles.invLocation}>Market Status: {position.market.status}</Text>
+                <Text style={styles.invDate}>
+                  Qty {position.amount} · Opened {new Date(position.openedAt).toLocaleDateString()}
+                </Text>
+
+                <View style={styles.invStats}>
+                  <View style={styles.invStat}>
+                    <Text style={styles.invStatVal}>{formatCurrency(position.currentValue)}</Text>
+                    <Text style={styles.invStatLabel}>Current Value</Text>
+                  </View>
+                  <View style={styles.invStat}>
+                    <Text style={[styles.invStatVal, { color: pnlPositive ? Colors.green : Colors.red }]}>
+                      {pnlPositive ? '+' : ''}{formatCurrency(position.unrealizedPnl)}
+                    </Text>
+                    <Text style={styles.invStatLabel}>P&L</Text>
+                  </View>
+                  <View style={styles.invStat}>
+                    <Text style={[styles.invStatVal, { color: Colors.gold }]}>{position.unrealizedPnlPct.toFixed(1)}%</Text>
+                    <Text style={styles.invStatLabel}>ROI</Text>
+                  </View>
+                </View>
+              </View>
+            );
+          })
+        )}
+
+        <Text style={styles.sectionTitle}>Recent Transactions ({transactions.length})</Text>
+        {transactions.length === 0 ? (
+          <View style={styles.emptyInline}>
+            <Text style={styles.emptyInlineText}>No transactions yet</Text>
+          </View>
+        ) : (
+          transactions.map((tx) => (
+            <View key={tx.id} style={styles.txCard}>
+              <View style={styles.txTopRow}>
+                <Text style={styles.txType}>{tx.txType.replace(/_/g, ' ')}</Text>
+                <Text style={styles.txAmount}>{formatCurrency(tx.amountUsdc)}</Text>
+              </View>
+              <Text style={styles.txMeta}>
+                Qty {tx.quantity} · {new Date(tx.createdAt).toLocaleString()}
+              </Text>
+              <Text style={styles.txSignature} numberOfLines={1}>{tx.txSignature}</Text>
+            </View>
+          ))
         )}
       </ScrollView>
     </View>
@@ -344,4 +404,44 @@ const styles = StyleSheet.create({
     borderColor: Colors.red,
   },
   sellBtnText: { fontSize: 12, fontWeight: '700' as const, color: Colors.red },
+  emptyInline: {
+    marginHorizontal: 20,
+    marginBottom: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.card,
+    padding: 12,
+  },
+  emptyInlineText: { fontSize: 12, color: Colors.textMuted, textAlign: 'center' },
+  positionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4,
+    gap: 10,
+  },
+  positionSidePill: {
+    backgroundColor: Colors.cyanGlow,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: Colors.cyan,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  positionSideText: { fontSize: 10, fontWeight: '700' as const, color: Colors.cyan },
+  txCard: {
+    marginHorizontal: 20,
+    backgroundColor: Colors.card,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    padding: 12,
+    marginBottom: 10,
+  },
+  txTopRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 },
+  txType: { fontSize: 12, color: Colors.text, fontWeight: '700' as const },
+  txAmount: { fontSize: 12, color: Colors.gold, fontWeight: '700' as const },
+  txMeta: { fontSize: 11, color: Colors.textSecondary, marginBottom: 4 },
+  txSignature: { fontSize: 10, color: Colors.textMuted },
 });

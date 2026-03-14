@@ -205,18 +205,33 @@ export default function SellSharesScreen() {
     if (!publicKeyBase58 || !isConnected) return false;
     if (!isDevnet) return false;
     if (quantityNum <= 0) return false;
+    if (quantityNum > maxQuantityOwned) return false;
     if (isLoadingPreview || !!previewError) return false;
     if (!preview) return false;
     return true;
-  }, [publicKeyBase58, isConnected, isDevnet, quantityNum, isLoadingPreview, previewError, preview]);
+  }, [
+    publicKeyBase58,
+    isConnected,
+    isDevnet,
+    quantityNum,
+    maxQuantityOwned,
+    isLoadingPreview,
+    previewError,
+    preview,
+  ]);
 
   const adjust = (delta: number) => {
-    const n = Math.max(1, (parseInt(quantity) || 0) + delta);
+    const n = Math.min(maxQuantityOwned, Math.max(1, (parseInt(quantity) || 0) + delta));
     setQuantity(String(n));
   };
 
   const handleConfirm = async () => {
     if (!canSell || !id || !publicKeyBase58) return;
+
+    if (quantityNum > maxQuantityOwned) {
+      setTransactionError(`You only hold ${maxQuantityOwned} units. Reduce sell quantity.`);
+      return;
+    }
 
     let stage = 'init';
 
@@ -447,7 +462,22 @@ export default function SellSharesScreen() {
             <TextInput
               style={styles.sharesInput}
               value={quantity}
-              onChangeText={(v) => setQuantity(v.replace(/[^0-9]/g, ''))}
+              onChangeText={(v) => {
+                const sanitized = v.replace(/[^0-9]/g, '');
+                if (!sanitized) {
+                  setQuantity('');
+                  return;
+                }
+
+                const parsed = parseInt(sanitized, 10);
+                if (!Number.isFinite(parsed)) {
+                  setQuantity('1');
+                  return;
+                }
+
+                const clamped = Math.min(maxQuantityOwned, Math.max(1, parsed));
+                setQuantity(String(clamped));
+              }}
               keyboardType="numeric"
               textAlign="center"
             />
@@ -520,7 +550,11 @@ export default function SellSharesScreen() {
                 transactionError ||
                 (!isConnected
                   ? 'Connect wallet first to close positions.'
-                  : 'Switch to devnet mode to execute this flow.')}
+                  : !isDevnet
+                    ? 'Switch to devnet mode to execute this flow.'
+                    : quantityNum > maxQuantityOwned
+                      ? `You only hold ${maxQuantityOwned} units.`
+                      : 'Invalid sell quantity.')}
             </Text>
           </View>
         )}

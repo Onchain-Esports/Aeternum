@@ -43,6 +43,25 @@ export type InitiateSellResponse = {
   unsignedTx: string;
 };
 
+export type ConfirmSellResponse = {
+  message: string;
+  quantity: number;
+  totalPayout: number;
+  feeBreakdown?: {
+    feeBps: number;
+    feeAmount: number;
+    grossPayout: number;
+    netPayout: number;
+  };
+  transaction?: {
+    id: string;
+    txType: string;
+    txSignature: string;
+    amountUsdc: number;
+    createdAt: string;
+  };
+};
+
 export type ConfirmBuyResponse = {
   success: boolean;
   investmentRecord?: {
@@ -204,11 +223,36 @@ export async function confirmBuyAsset(params: {
   assetId: string;
   quantity: number;
 }): Promise<unknown> {
-  return apiRequest("/api/assets/buy/confirm", {
-    method: "POST",
-    body: params,
-    requiresAuth: true,
-  });
+  // Mobile network can briefly drop after returning from wallet app; retry
+  // network-level failures only (status 0) to avoid masking real API errors.
+  const maxAttempts = 3;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await apiRequest("/api/assets/buy/confirm", {
+        method: "POST",
+        body: params,
+        requiresAuth: true,
+      });
+    } catch (error) {
+      const isNetworkFailure = error instanceof ApiError && error.status === 0;
+      const isLastAttempt = attempt === maxAttempts;
+
+      if (!isNetworkFailure || isLastAttempt) {
+        throw error;
+      }
+
+      console.warn("[Transactions] buy confirm retry after network failure", {
+        attempt,
+        txSignature: params.txSignature,
+        assetId: params.assetId,
+      });
+
+      await sleep(500 * attempt);
+    }
+  }
+
+  throw new Error("Buy confirm failed after retries");
 }
 
 // ──── Asset trading: sell ────────────────────────────────────────────────────
@@ -240,12 +284,37 @@ export async function confirmSellAsset(params: {
   txSignature: string;
   assetId: string;
   quantity: number;
-}): Promise<unknown> {
-  return apiRequest("/api/assets/sell/confirm", {
-    method: "POST",
-    body: params,
-    requiresAuth: true,
-  });
+}): Promise<ConfirmSellResponse> {
+  // Mobile network can briefly drop after returning from wallet app; retry
+  // network-level failures only (status 0) to avoid masking real API errors.
+  const maxAttempts = 3;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await apiRequest<ConfirmSellResponse>("/api/assets/sell/confirm", {
+        method: "POST",
+        body: params,
+        requiresAuth: true,
+      });
+    } catch (error) {
+      const isNetworkFailure = error instanceof ApiError && error.status === 0;
+      const isLastAttempt = attempt === maxAttempts;
+
+      if (!isNetworkFailure || isLastAttempt) {
+        throw error;
+      }
+
+      console.warn("[Transactions] sell confirm retry after network failure", {
+        attempt,
+        txSignature: params.txSignature,
+        assetId: params.assetId,
+      });
+
+      await sleep(500 * attempt);
+    }
+  }
+
+  throw new Error("Sell confirm failed after retries");
 }
 
 // ──── Legacy property transactions (kept for compatibility) ──────────────────

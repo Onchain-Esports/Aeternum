@@ -1,6 +1,7 @@
 import { MOCK_USER } from '@/mocks/data';
 import { BACKEND_TOKEN_KEY } from '@/services/api';
-import { fetchMyInvestments } from '@/services/investments';
+import { fetchMyInvestments, MarketPosition, PortfolioHolding } from '@/services/investments';
+import type { UserTransaction } from '@/services/transactions';
 import { runMobileWalletTransaction } from '@/services/mobileWallet';
 import { fetchUserProfile } from '@/services/userProfile';
 import {
@@ -397,6 +398,9 @@ export const [WalletProvider, useWallet] = createContextHook(() => {
 
   const investments: Investment[] = investmentsSummaryQuery.data?.investments ?? [];
   const listings: Listing[] = investmentsSummaryQuery.data?.listings ?? [];
+  const holdings: PortfolioHolding[] = investmentsSummaryQuery.data?.holdings ?? [];
+  const positions: MarketPosition[] = investmentsSummaryQuery.data?.positions ?? [];
+  const transactions: UserTransaction[] = investmentsSummaryQuery.data?.transactions ?? [];
   const profile = profileQuery.data ?? {
     ...MOCK_USER,
     walletAddress: publicKeyBase58 ?? walletAddress ?? MOCK_USER.walletAddress,
@@ -424,6 +428,9 @@ export const [WalletProvider, useWallet] = createContextHook(() => {
     isSetupComplete,
     profile,
     investments,
+    holdings,
+    positions,
+    transactions,
     listings,
     totalPortfolioValue,
     totalInvested,

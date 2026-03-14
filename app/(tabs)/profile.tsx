@@ -73,7 +73,7 @@ export default function ProfileScreen() {
             </TouchableOpacity>
           </View>
 
-          <Text style={styles.joinDate}>Member since {profile.joinDate}</Text>
+          <Text style={styles.joinDate}>Member since {profile.joinDate}       </Text>
         </View>
 
         <View style={styles.statsGrid}>
