@@ -1,12 +1,14 @@
 import Colors from '@/constants/Colors';
 import { useWallet } from '@/context/WalletContext';
 import { formatCurrency } from '@/mocks/data';
+import { useQueryClient } from '@tanstack/react-query';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 import { ChevronRight, PlusCircle, TrendingDown, TrendingUp, Zap } from 'lucide-react-native';
-import React from 'react';
+import React, { useCallback, useState } from 'react';
 import {
   Image,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -17,7 +19,9 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 export default function InvestmentsScreen() {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const insets = useSafeAreaInsets();
+  const [refreshing, setRefreshing] = useState(false);
   const {
     investments,
     holdings,
@@ -31,6 +35,19 @@ export default function InvestmentsScreen() {
   } = useWallet();
 
   const roiPositive = overallROI >= 0;
+
+  const handleRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['investments_me'] }),
+        queryClient.invalidateQueries({ queryKey: ['yield_claimable'] }),
+        queryClient.invalidateQueries({ queryKey: ['user_profile'] }),
+      ]);
+    } finally {
+      setRefreshing(false);
+    }
+  }, [queryClient]);
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
@@ -48,7 +65,19 @@ export default function InvestmentsScreen() {
         </TouchableOpacity>
       </View>
 
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 32 }}>
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={{ paddingBottom: 32 }}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={handleRefresh}
+            tintColor={Colors.gold}
+            colors={[Colors.gold]}
+            progressBackgroundColor={Colors.card}
+          />
+        }
+      >
         <View style={styles.summaryCard}>
           <LinearGradient
             colors={['#1C1A08', '#241F0A']}

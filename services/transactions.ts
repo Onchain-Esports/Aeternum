@@ -319,6 +319,278 @@ export async function confirmSellAsset(params: {
 
 // ──── Legacy property transactions (kept for compatibility) ──────────────────
 
+// ──── Prediction market trading ───────────────────────────────────────────────
+
+export type PredictionSide = "TEAM_A" | "TEAM_B";
+
+export type PredictionBuyPreview = {
+  marketId: string;
+  side: PredictionSide;
+  quantity: number;
+  baseCost: number;
+  totalCost: number;
+  feeBreakdown: { feeBps: number; feeAmount: number };
+  teamAName: string;
+  teamBName: string;
+};
+
+type PreparePredictionBuyResponse = {
+  unsignedTx: string;
+  preview: PredictionBuyPreview;
+};
+
+export type ConfirmPredictionBuyResponse = {
+  message: string;
+  market: {
+    id: string;
+    matchId: string;
+    contractAddr: string;
+    liquidityPool: number;
+    supplyA: number;
+    supplyB: number;
+    basePrice: number;
+    curveK: number;
+    status: string;
+    createdAt: string;
+  };
+  quantity: number;
+  totalCost: number;
+  feeBreakdown: {
+    feeBps: number;
+    feeAmount: number;
+    baseCost: number;
+  };
+  transaction: UserTransaction;
+};
+
+export type PredictionSellPreview = {
+  marketId: string;
+  side: PredictionSide;
+  quantity: number;
+  grossPayout: number;
+  netPayout: number;
+  feeBreakdown: { feeBps: number; feeAmount: number };
+  teamAName: string;
+  teamBName: string;
+};
+
+type PreparePredictionSellResponse = {
+  unsignedTx: string;
+  preview: PredictionSellPreview;
+};
+
+export type ConfirmPredictionSellResponse = {
+  message: string;
+  market: {
+    id: string;
+    matchId: string;
+    contractAddr: string;
+    liquidityPool: number;
+    supplyA: number;
+    supplyB: number;
+    basePrice: number;
+    curveK: number;
+    status: string;
+    createdAt: string;
+  };
+  quantity: number;
+  totalPayout: number;
+  feeBreakdown: {
+    feeBps: number;
+    feeAmount: number;
+    grossPayout: number;
+    netPayout: number;
+  };
+  transaction: UserTransaction;
+};
+
+export type PredictionClaimPreview = {
+  marketId: string;
+  winningSide: PredictionSide;
+  winningAmount: number;
+  grossPayout: number;
+  netPayout: number;
+  feeBreakdown: { feeBps: number; feeAmount: number };
+  teamAName: string;
+  teamBName: string;
+};
+
+type PreparePredictionClaimResponse = {
+  unsignedTx: string;
+  preview: PredictionClaimPreview;
+};
+
+export type ConfirmPredictionClaimResponse = {
+  message: string;
+  payout: number;
+  transaction: UserTransaction;
+};
+
+export async function prepareBuyPrediction(params: {
+  marketId: string;
+  side: PredictionSide;
+  quantity: number;
+}): Promise<PreparePredictionBuyResponse> {
+  return apiRequest<PreparePredictionBuyResponse>("/api/markets/buy/prepare", {
+    method: "POST",
+    body: params,
+    requiresAuth: true,
+  });
+}
+
+export async function confirmBuyPrediction(params: {
+  txSignature: string;
+  marketId: string;
+  side: PredictionSide;
+  quantity: number;
+}): Promise<ConfirmPredictionBuyResponse> {
+  const maxAttempts = 5;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await apiRequest<ConfirmPredictionBuyResponse>(
+        "/api/markets/buy/confirm",
+        {
+          method: "POST",
+          body: params,
+          requiresAuth: true,
+        },
+      );
+    } catch (error) {
+      const isNetworkFailure = error instanceof ApiError && error.status === 0;
+      const isLastAttempt = attempt === maxAttempts;
+
+      if (!isNetworkFailure || isLastAttempt) {
+        throw error;
+      }
+
+      console.warn(
+        "[Transactions] prediction buy confirm retry after network failure",
+        {
+          attempt,
+          txSignature: params.txSignature,
+          marketId: params.marketId,
+        },
+      );
+
+      await sleep(800 * attempt);
+    }
+  }
+
+  throw new Error("Prediction buy confirm failed after retries");
+}
+
+export async function prepareSellPrediction(params: {
+  marketId: string;
+  side: PredictionSide;
+  quantity: number;
+}): Promise<PreparePredictionSellResponse> {
+  return apiRequest<PreparePredictionSellResponse>(
+    "/api/markets/sell/prepare",
+    {
+      method: "POST",
+      body: params,
+      requiresAuth: true,
+    },
+  );
+}
+
+export async function confirmSellPrediction(params: {
+  txSignature: string;
+  marketId: string;
+  side: PredictionSide;
+  quantity: number;
+}): Promise<ConfirmPredictionSellResponse> {
+  const maxAttempts = 5;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await apiRequest<ConfirmPredictionSellResponse>(
+        "/api/markets/sell/confirm",
+        {
+          method: "POST",
+          body: params,
+          requiresAuth: true,
+        },
+      );
+    } catch (error) {
+      const isNetworkFailure = error instanceof ApiError && error.status === 0;
+      const isLastAttempt = attempt === maxAttempts;
+
+      if (!isNetworkFailure || isLastAttempt) {
+        throw error;
+      }
+
+      console.warn(
+        "[Transactions] prediction sell confirm retry after network failure",
+        {
+          attempt,
+          txSignature: params.txSignature,
+          marketId: params.marketId,
+        },
+      );
+
+      await sleep(800 * attempt);
+    }
+  }
+
+  throw new Error("Prediction sell confirm failed after retries");
+}
+
+export async function prepareClaimPrediction(params: {
+  marketId: string;
+}): Promise<PreparePredictionClaimResponse> {
+  return apiRequest<PreparePredictionClaimResponse>(
+    "/api/markets/claim/prepare",
+    {
+      method: "POST",
+      body: params,
+      requiresAuth: true,
+      logHttpFailure: false,
+    },
+  );
+}
+
+export async function confirmClaimPrediction(params: {
+  txSignature: string;
+  marketId: string;
+}): Promise<ConfirmPredictionClaimResponse> {
+  const maxAttempts = 3;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await apiRequest<ConfirmPredictionClaimResponse>(
+        "/api/markets/claim/confirm",
+        {
+          method: "POST",
+          body: params,
+          requiresAuth: true,
+        },
+      );
+    } catch (error) {
+      const isNetworkFailure = error instanceof ApiError && error.status === 0;
+      const isLastAttempt = attempt === maxAttempts;
+
+      if (!isNetworkFailure || isLastAttempt) {
+        throw error;
+      }
+
+      console.warn(
+        "[Transactions] prediction claim confirm retry after network failure",
+        {
+          attempt,
+          txSignature: params.txSignature,
+          marketId: params.marketId,
+        },
+      );
+
+      await sleep(500 * attempt);
+    }
+  }
+
+  throw new Error("Prediction claim confirm failed after retries");
+}
+
 export async function confirmTransaction(params: {
   txSignature: string;
   propertyId: string;

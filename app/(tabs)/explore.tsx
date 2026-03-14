@@ -1,6 +1,6 @@
 import Colors from '@/constants/Colors';
 import { formatCurrency } from '@/mocks/data';
-import { fetchMarkets } from '@/services/markets';
+import { fetchAssetMarkets, fetchPredictionMarkets } from '@/services/markets';
 import type { Property } from '@/types';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
@@ -21,6 +21,10 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const FILTER_TYPES = ['All', 'Open', 'Scheduled', 'Closed'];
+const EXPLORE_SECTIONS = [
+  { label: 'Assets', value: 'assets' },
+  { label: 'Betting Exchange', value: 'betting' },
+] as const;
 const SORT_OPTIONS = [
   { label: 'Rewards ↓', value: 'yield' },
   { label: 'Newest', value: 'newest' },
@@ -136,7 +140,9 @@ export default function ExploreScreen() {
   const [search, setSearch] = useState('');
   const [selectedType, setSelectedType] = useState('All');
   const [sortBy, setSortBy] = useState('yield');
-  const [properties, setProperties] = useState<Property[]>([]);
+  const [activeSection, setActiveSection] = useState<(typeof EXPLORE_SECTIONS)[number]['value']>('assets');
+  const [assetMarkets, setAssetMarkets] = useState<Property[]>([]);
+  const [bettingMarkets, setBettingMarkets] = useState<Property[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [loadError, setLoadError] = useState('');
@@ -149,8 +155,12 @@ export default function ExploreScreen() {
         setIsRefreshing(true);
       }
       setLoadError('');
-      const data = await fetchMarkets();
-      setProperties(data);
+      const [assetsData, bettingData] = await Promise.all([
+        fetchAssetMarkets(),
+        fetchPredictionMarkets(),
+      ]);
+      setAssetMarkets(assetsData);
+      setBettingMarkets(bettingData);
     } catch (error) {
       setLoadError(error instanceof Error ? error.message : 'Unable to fetch markets');
     } finally {
@@ -168,6 +178,11 @@ export default function ExploreScreen() {
 
   const hasActiveFilters = search.length > 0 || selectedType !== 'All' || sortBy !== 'yield';
 
+  const currentMarkets = useMemo(
+    () => (activeSection === 'assets' ? assetMarkets : bettingMarkets),
+    [activeSection, assetMarkets, bettingMarkets],
+  );
+
   const resetFilters = () => {
     setSearch('');
     setSelectedType('All');
@@ -179,7 +194,7 @@ export default function ExploreScreen() {
   };
 
   const filtered = useMemo(() => {
-    let list = [...properties];
+    let list = [...currentMarkets];
     const normalizedSearch = search.trim().toLowerCase();
 
     if (normalizedSearch) {
@@ -217,7 +232,11 @@ export default function ExploreScreen() {
     }
 
     return list;
-  }, [properties, search, selectedType, sortBy]);
+  }, [currentMarkets, search, selectedType, sortBy]);
+
+  const sectionCountText = activeSection === 'assets'
+    ? `${assetMarkets.length} live asset markets`
+    : `${bettingMarkets.length} live betting markets`;
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
@@ -226,7 +245,31 @@ export default function ExploreScreen() {
       {/* Header */}
       <View style={styles.header}>
         <Text style={styles.title}>Explore Markets</Text>
-        <Text style={styles.subtitle}>{properties.length} live esports markets</Text>
+        <Text style={styles.subtitle}>{sectionCountText}</Text>
+      </View>
+
+      {/* Explore Section Tabs */}
+      <View style={styles.sectionTabsRow}>
+        {EXPLORE_SECTIONS.map(section => (
+          <TouchableOpacity
+            key={section.value}
+            style={[
+              styles.sectionTab,
+              activeSection === section.value && styles.sectionTabActive,
+            ]}
+            onPress={() => setActiveSection(section.value)}
+            activeOpacity={0.85}
+          >
+            <Text
+              style={[
+                styles.sectionTabText,
+                activeSection === section.value && styles.sectionTabTextActive,
+              ]}
+            >
+              {section.label}
+            </Text>
+          </TouchableOpacity>
+        ))}
       </View>
 
       {/* Search Row */}
@@ -325,14 +368,21 @@ export default function ExploreScreen() {
               key={p.id}
               property={p}
               cardWidth={cardWidth}
-              onPress={() => router.push(`/buy/${p.id}` as any)}
+              onPress={() => {
+                if (activeSection === 'assets') {
+                  router.push(`/buy/${p.id}` as any);
+                  return;
+                }
+
+                router.push(`/market/${p.id}` as any);
+              }}
             />
           ))
         )}
         {!isLoading && !loadError && filtered.length === 0 && (
           <View style={styles.emptyState}>
             <Text style={styles.emptyIcon}>🎮</Text>
-            <Text style={styles.emptyTitle}>No markets found</Text>
+            <Text style={styles.emptyTitle}>No {activeSection === 'assets' ? 'asset' : 'betting'} markets found</Text>
             <Text style={styles.emptyText}>Try adjusting your search or filters</Text>
           </View>
         )}
@@ -348,6 +398,39 @@ const styles = StyleSheet.create({
   header: { paddingHorizontal: 20, paddingTop: 14, marginBottom: 16 },
   title: { fontSize: 24, fontWeight: '700' as const, color: Colors.text, marginBottom: 4 },
   subtitle: { fontSize: 13, color: Colors.textMuted },
+
+  // Section tabs
+  sectionTabsRow: {
+    flexDirection: 'row',
+    marginHorizontal: 20,
+    marginBottom: 12,
+    borderRadius: 12,
+    padding: 4,
+    backgroundColor: Colors.card,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  sectionTab: {
+    flex: 1,
+    height: 38,
+    borderRadius: 9,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  sectionTabActive: {
+    backgroundColor: Colors.goldGlow,
+    borderWidth: 1,
+    borderColor: Colors.gold,
+  },
+  sectionTabText: {
+    fontSize: 13,
+    fontWeight: '600' as const,
+    color: Colors.textMuted,
+  },
+  sectionTabTextActive: {
+    color: Colors.gold,
+    fontWeight: '700' as const,
+  },
 
   // Search
   searchRow: {

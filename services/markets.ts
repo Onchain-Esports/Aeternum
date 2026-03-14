@@ -1,7 +1,8 @@
+import { apiRequest } from "@/services/api";
 import { fetchAssets, type Asset } from "@/services/assets";
 import type { Property } from "@/types";
 
-type BackendMarket = {
+export type PredictionMarket = {
   id: string;
   matchId: string;
   contractAddr: string;
@@ -44,7 +45,7 @@ type BackendMarket = {
 
 type MarketsResponse = {
   message: string;
-  data: BackendMarket[];
+  data: PredictionMarket[];
 };
 
 const FALLBACK_IMAGE =
@@ -57,7 +58,7 @@ function mapMarketStatus(status: string): Property["status"] {
   return "sold_out";
 }
 
-function mapMarket(m: BackendMarket): Property {
+function mapMarket(m: PredictionMarket): Property {
   const avgPrice = (m.teamAPrice + m.teamBPrice) / 2;
   const images = [m.match.teamA.logoUrl, m.match.teamB.logoUrl].filter(
     (u): u is string => !!u,
@@ -133,6 +134,32 @@ function mapAssetToProperty(asset: Asset): Property {
 }
 
 export async function fetchMarkets(): Promise<Property[]> {
+  // Backward-compatible alias used by existing explore screen.
+  return fetchAssetMarkets();
+}
+
+export async function fetchAssetMarkets(): Promise<Property[]> {
   const assets = await fetchAssets();
   return assets.map(mapAssetToProperty);
+}
+
+export async function fetchPredictionMarkets(): Promise<Property[]> {
+  const markets = await fetchPredictionMarketsRaw();
+  return markets.map(mapMarket);
+}
+
+export async function fetchPredictionMarketsRaw(): Promise<PredictionMarket[]> {
+  const response = await apiRequest<MarketsResponse>("/api/markets", {
+    method: "GET",
+    requiresAuth: true,
+  });
+
+  return response.data ?? [];
+}
+
+export async function fetchPredictionMarketById(
+  marketId: string,
+): Promise<PredictionMarket | null> {
+  const markets = await fetchPredictionMarketsRaw();
+  return markets.find((market) => market.id === marketId) ?? null;
 }

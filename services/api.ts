@@ -11,6 +11,7 @@ type ApiRequestOptions = {
   body?: JsonValue | FormData;
   headers?: Record<string, string>;
   requiresAuth?: boolean;
+  logHttpFailure?: boolean;
 };
 
 export class ApiError extends Error {
@@ -29,7 +30,13 @@ export async function apiRequest<T>(
   path: string,
   options: ApiRequestOptions = {},
 ): Promise<T> {
-  const { method = "GET", body, headers = {}, requiresAuth = true } = options;
+  const {
+    method = "GET",
+    body,
+    headers = {},
+    requiresAuth = true,
+    logHttpFailure = true,
+  } = options;
   const url = `${BACKEND_BASE_URL}${path}`;
 
   const requestHeaders: Record<string, string> = {
@@ -83,13 +90,15 @@ export async function apiRequest<T>(
         ? String((parsed as { message?: unknown }).message ?? "")
         : "";
 
-    console.error("[API] HTTP failure", {
-      method,
-      path,
-      url,
-      status: response.status,
-      response: parsed,
-    });
+    if (logHttpFailure) {
+      console.error("[API] HTTP failure", {
+        method,
+        path,
+        url,
+        status: response.status,
+        response: parsed,
+      });
+    }
 
     throw new ApiError(
       messageFromBody || `Request failed with status ${response.status}`,
