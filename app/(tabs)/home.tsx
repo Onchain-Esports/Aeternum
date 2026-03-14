@@ -1,6 +1,7 @@
 import Colors from '@/constants/Colors';
 import { useWallet } from '@/context/WalletContext';
 import { formatCurrency } from '@/mocks/data';
+import { useQueryClient } from '@tanstack/react-query';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 import { ArrowDownRight, ArrowUpRight, Bell, ChevronRight, Copy, Layers, TrendingUp, Zap } from 'lucide-react-native';
@@ -14,7 +15,6 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { useQueryClient } from '@tanstack/react-query';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Defs, Path, Stop, LinearGradient as SvgGrad } from 'react-native-svg';
 

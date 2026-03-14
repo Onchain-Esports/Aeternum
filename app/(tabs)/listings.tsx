@@ -10,12 +10,12 @@ import { useWalletStore } from '@/stores/wallet-store';
 import { Listing } from '@/types';
 import { Web3MobileWallet } from '@solana-mobile/mobile-wallet-adapter-protocol-web3js';
 import { clusterApiUrl, Connection, VersionedTransaction } from '@solana/web3.js';
+import { useQueryClient } from '@tanstack/react-query';
 import bs58 from 'bs58';
 import { Buffer } from 'buffer';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
 import {
   ActivityIndicator,
   Alert,

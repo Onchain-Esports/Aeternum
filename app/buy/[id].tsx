@@ -13,13 +13,13 @@ import {
 import { useWalletStore } from '@/stores/wallet-store';
 import { Web3MobileWallet } from '@solana-mobile/mobile-wallet-adapter-protocol-web3js';
 import { clusterApiUrl, Connection, VersionedTransaction } from '@solana/web3.js';
+import { useQueryClient } from '@tanstack/react-query';
 import bs58 from 'bs58';
 import { Buffer } from 'buffer';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { ArrowLeft, Check, Minus, Plus, Shield, Wallet } from 'lucide-react-native';
 import React, { useEffect, useMemo, useState } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
 import {
   ActivityIndicator,
   ScrollView,
