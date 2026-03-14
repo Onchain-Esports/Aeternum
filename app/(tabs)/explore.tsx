@@ -325,7 +325,7 @@ export default function ExploreScreen() {
               key={p.id}
               property={p}
               cardWidth={cardWidth}
-              onPress={() => router.push(`/property/${p.id}` as any)}
+              onPress={() => router.push(`/buy/${p.id}` as any)}
             />
           ))
         )}

@@ -1,4 +1,4 @@
-import { apiRequest } from "@/services/api";
+import { fetchAssets, type Asset } from "@/services/assets";
 import type { Property } from "@/types";
 
 type BackendMarket = {
@@ -93,16 +93,46 @@ function mapMarket(m: BackendMarket): Property {
   };
 }
 
-export async function fetchMarkets(): Promise<Property[]> {
-  const response = await apiRequest<MarketsResponse>("/api/markets", {
-    method: "GET",
-    requiresAuth: false,
-  });
+function mapAssetToProperty(asset: Asset): Property {
+  // Map asset type to property type catalogue values
+  const assetTypeMap: Record<string, Property["type"]> = {
+    TEAM: "Commercial",
+    COLLECTION: "Mixed-Use",
+  };
 
-  return (response.data ?? [])
-    .filter(
-      (m): m is BackendMarket =>
-        !!m && typeof m === "object" && typeof m.id === "string",
-    )
-    .map(mapMarket);
+  const images: string[] = [];
+  if (asset.team?.logoUrl) images.push(asset.team.logoUrl);
+  if (images.length === 0) images.push(FALLBACK_IMAGE);
+
+  return {
+    id: asset.id,
+    name: asset.name,
+    location: asset.collection?.name ?? "Collection",
+    city: asset.team?.game ?? "Esports",
+    country: asset.team?.region ?? "Global",
+    type: assetTypeMap[asset.assetType] || "Commercial",
+    image: asset.team?.logoUrl ?? FALLBACK_IMAGE,
+    images,
+    description: asset.collection?.description ?? asset.name,
+    pricePerShare: asset.currentPrice,
+    totalValuation: asset.currentPrice * asset.circulating,
+    tokenizedAmount: asset.currentPrice * asset.circulating,
+    totalShares: asset.totalSupply,
+    availableShares: asset.totalSupply - asset.circulating,
+    yieldPercent: +(asset.bondingCurveK * 100).toFixed(2),
+    monthlyRental: 0,
+    operatingCosts: 0,
+    managementFeePercent: 0,
+    insuranceCost: 0,
+    capRate: 0,
+    occupancy: 100,
+    totalInvestors: 0,
+    status: "active",
+    isFeatured: false,
+  };
+}
+
+export async function fetchMarkets(): Promise<Property[]> {
+  const assets = await fetchAssets();
+  return assets.map(mapAssetToProperty);
 }
